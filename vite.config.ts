@@ -3,15 +3,27 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig(({ mode }) => {
+  // Load env file based on `mode` in the current working directory.
   const env = loadEnv(mode, process.cwd(), '');
+  
+  // Expose all env variables to the client
+  const envWithProcessPrefix = {
+    'process.env': `${JSON.stringify(env)}`,
+    // Explicitly include VITE_ prefixed variables
+    ...Object.entries(env).reduce((prev, [key, val]) => {
+      if (key.startsWith('VITE_')) {
+        return {
+          ...prev,
+          [`import.meta.env.${key}`]: JSON.stringify(val)
+        };
+      }
+      return prev;
+    }, {})
+  };
+
   return {
     plugins: [react()],
-    define: {
-      'process.env': {
-        GEMINI_API_KEY: JSON.stringify(env.GEMINI_API_KEY),
-        NODE_ENV: JSON.stringify(process.env.NODE_ENV || 'production')
-      }
-    },
+    define: envWithProcessPrefix,
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

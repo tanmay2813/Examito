@@ -3,27 +3,27 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig(({ mode }) => {
-  // Load env file based on `mode` in the current working directory.
+  // Only load env variables that start with VITE_ to the client
   const env = loadEnv(mode, process.cwd(), '');
   
-  // Expose all env variables to the client
-  const envWithProcessPrefix = {
-    'process.env': `${JSON.stringify(env)}`,
-    // Explicitly include VITE_ prefixed variables
-    ...Object.entries(env).reduce((prev, [key, val]) => {
-      if (key.startsWith('VITE_')) {
-        return {
-          ...prev,
-          [`import.meta.env.${key}`]: JSON.stringify(val)
-        };
-      }
-      return prev;
-    }, {})
-  };
+  // Environment variables that should be exposed to the client
+  const clientEnv = {};
+  
+  // Only expose VITE_ prefixed variables to the client
+  for (const key in env) {
+    if (key.startsWith('VITE_')) {
+      clientEnv[`import.meta.env.${key}`] = JSON.stringify(env[key]);
+    }
+  }
 
   return {
     plugins: [react()],
-    define: envWithProcessPrefix,
+    define: {
+      // Expose VITE_ prefixed environment variables to the client
+      ...clientEnv,
+      // Global constants
+      __APP_ENV__: JSON.stringify(env.NODE_ENV || 'production')
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

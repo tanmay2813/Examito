@@ -1,17 +1,15 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { UserProfile, Question, Message } from '../types';
 
-// Get API key from environment variables (Vite prefixes client-side env vars with VITE_)
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+// Get API key from environment variables
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 if (!API_KEY) {
-    console.error("GEMINI_API_KEY environment variable is not set");
-    // Don't throw error in production to prevent app from crashing
-    if (import.meta.env.DEV) {
-        throw new Error("GEMINI_API_KEY environment variable not set. Please set it in your .env file");
-    }
+    console.warn("VITE_GEMINI_API_KEY is not set. Some features may not work.");
+    // Don't throw error to prevent app from crashing
 }
 
+// Initialize GoogleGenAI only if API key is available
 const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
 
 const model = 'gemini-2.5-flash';

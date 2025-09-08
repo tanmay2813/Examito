@@ -37,10 +37,13 @@ export interface TimelineEntry {
 }
 
 export interface Question {
+    id: string;
     questionText: string;
     options: string[];
     correctAnswer: string;
-    explanation?: string;
+    explanation: string;
+    subject: string;
+    difficulty: 'easy' | 'medium' | 'hard';
     userAnswer?: string;
     isCorrect?: boolean;
 }

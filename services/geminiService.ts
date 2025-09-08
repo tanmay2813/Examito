@@ -27,57 +27,124 @@ Strictly follow these rules:
     - **Direct Answer Mode:** Use this ONLY for questions asking for definitions, summaries, or simple facts (e.g., "What is...", "Define..."). Give a clear, concise answer.
     - **Critical Thinking Mode:** This is your default. For questions involving "why," "how," or problem-solving, guide the student with Socratic questions. DO NOT give the answer directly. Help them think!
 
-2.  **Proactive Timeline Management:** You have a tool to add study reminders to the user's timeline.
-    - **Trigger:** When you discuss a key concept, a deadline, or a new topic that the user should review, add it to their timeline.
-    - **Action:** To add an entry, include this exact block in your response. The main text of your response should also mention that you've added it.
-    <TIMELINE_ENTRY>
-    {
-      "title": "A concise title for the timeline",
-      "description": "A brief description of what to study or remember.",
-      "date": "YYYY-MM-DD",
-      "reminderFrequency": "weekly"
-    }
-    </TIMELINE_ENTRY>
-    - **Example Usage:** After explaining photosynthesis, you might say: "That's the basics of it! I've added 'Review Photosynthesis' to your timeline for next week to help you remember. 🗓️" and include the TIMELINE_ENTRY block.
+2.  **Proactive Timeline Management:** You can add study reminders to the user's timeline.
+    - **When to add an entry:**
+      * When introducing a new concept that should be reviewed later
+      * When setting a study goal or deadline
+      * When the student struggles with a concept
+      * At the end of a study session to schedule review
+    
+    - **How to add an entry:**
+      Include a JSON object with the following structure in your response, exactly as shown:
+      
+      {"timelineAction":"add","entry":{"type":"study","title":"Review [Topic]","description":"Brief description of what to review","date":"YYYY-MM-DD","reminderFrequency":"weekly"}}
+      
+      Replace the placeholders with actual values:
+      - [Topic]: The subject or concept to review
+      - YYYY-MM-DD: The date for the review (e.g., 2023-12-15)
+      
+      The date should be in the future, typically 1-7 days from now for review items.
+    
+    - **Example Usage:** 
+      After explaining a concept, you might respond:
+      "Great job learning about photosynthesis! I've added a review session to your timeline for next week to help reinforce what you've learned. 🌱"
+      
+      And include the timeline entry like this:
+      {"timelineAction":"add","entry":{"type":"study","title":"Review Photosynthesis","description":"Review the process of photosynthesis and its importance to plants","date":"2023-12-20","reminderFrequency":"weekly"}}
+
+3. **Response Format:**
+   - Always respond in markdown format
+   - Use emojis to make the conversation more engaging
+   - Keep explanations clear and concise
+   - Break down complex topics into smaller, manageable parts
 
 3.  **File Analysis:** If the user uploads a file (image or text from a PDF), analyze it in the context of their question. For example, if they upload a diagram and ask "What is this?", explain the diagram. If they upload text from a PDF and ask for a summary, provide it.
 `;
+
+interface TimelineAction {
+    timelineAction: 'add' | 'update' | 'remove';
+    entry: any;
+}
+
+const parseTimelineAction = (text: string): TimelineAction | null => {
+    try {
+        // Look for a JSON object in the response
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return null;
+        
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.timelineAction && parsed.entry) {
+            return parsed as TimelineAction;
+        }
+        return null;
+    } catch (error) {
+        console.error('Error parsing timeline action:', error);
+        return null;
+    }
+};
 
 export const getAdaptiveResponse = async (
     history: Message[],
     newMessage: string,
     file?: { mimeType: string, data: string }
-): Promise<string> => {
+): Promise<{ text: string; timelineAction?: TimelineAction }> => {
     if (!ai) {
         console.error("AI client is not initialized. Please check your API key.");
-        return "I'm sorry, but the AI service is currently unavailable. Please check your API key and try again later.";
+        return {
+            text: "I'm sorry, but I'm having trouble connecting to the AI service. Please check your API key and try again later."
+        };
     }
-    
+
     try {
-        const contents = history.map(msg => ({
-            role: msg.sender === 'user' ? 'user' : 'model',
-            parts: msg.file && msg.file.base64Data
-                ? [{ inlineData: { mimeType: msg.file.type, data: msg.file.base64Data }}, { text: msg.text }]
-                : [{ text: msg.text }]
-        }));
+        // Prepare the conversation history
+        const messages = [
+            { role: 'user', parts: [{ text: getAdaptiveTutorPrompt() }] },
+            { role: 'model', parts: [{ text: 'I am Examito, your AI tutor. How can I help you learn today?' }] },
+            ...history.map(msg => ({
+                role: msg.sender === 'user' ? 'user' : 'model',
+                parts: [{ text: msg.text }]
+            })),
+            { role: 'user', parts: [{ text: newMessage }] }
+        ];
 
-        const newParts: any[] = [{ text: newMessage }];
+        // If there's a file, add it to the last user message
         if (file) {
-            newParts.unshift({ inlineData: { mimeType: file.mimeType, data: file.data } });
+            const lastMessage = messages[messages.length - 1];
+            (lastMessage.parts as any[]).push({
+                fileData: {
+                    mimeType: file.mimeType,
+                    data: file.data
+                }
+            });
         }
-        contents.push({ role: 'user', parts: newParts });
 
-        const response = await ai.models.generateContent({
-            model,
-            contents,
-            config: {
-                systemInstruction: getAdaptiveTutorPrompt(),
-            }
+        // Generate the response
+        const result = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: messages,
+            generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 2000,
+            },
         });
-        return response.text;
+
+        const responseText = result.text();
+        
+        // Check for timeline actions in the response
+        const timelineAction = parseTimelineAction(responseText);
+        
+        // Remove the JSON from the response text if it exists
+        const cleanText = responseText.replace(/\{[\s\S]*\}/, '').trim();
+        
+        return {
+            text: cleanText || responseText,
+            ...(timelineAction && { timelineAction })
+        };
     } catch (error) {
-        console.error("Error getting AI response:", error);
-        return "I'm sorry, but I encountered an error while processing your request. Please try again later.";
+        console.error('Error generating adaptive response:', error);
+        return {
+            text: "I'm sorry, but I encountered an error while processing your request. Please try again later."
+        };
     }
 };
 
@@ -119,40 +186,77 @@ export const generateTestQuestions = async (subject: string, board: string, topi
     if (!ai) {
         console.error("AI client is not initialized. Please check your API key.");
         return [{
+            id: `error-${Date.now()}`,
             questionText: "AI service is currently unavailable. Please check your API key.",
             options: ["Option 1", "Option 2", "Option 3", "Option 4"],
             correctAnswer: "Option 1",
-            explanation: "The AI service is not available. Please check your API key and try again."
+            explanation: "The AI service is not available. Please check your API key and try again.",
+            subject: subject || 'General',
+            difficulty: 'medium'
         }];
     }
 
     try {
-        const prompt = `Generate a ${numQuestions}-question multiple-choice test on the topic of "${topic}" for a student studying under the "${board}" academic board. The subject is ${subject}.`;
+        const prompt = `Generate a ${numQuestions}-question multiple-choice test in JSON format on the topic of "${topic}" for a student studying under the "${board}" academic board. The subject is ${subject}.
+        
+        The response must be a valid JSON array where each question has these exact fields:
+        - id: string (unique identifier)
+        - questionText: string (the question itself)
+        - options: string[] (exactly 4 options)
+        - correctAnswer: string (must match one of the options exactly)
+        - explanation: string (detailed explanation of the answer)
+        - subject: string (the subject area)
+        - difficulty: 'easy' | 'medium' | 'hard'
+        
+        Example format:
+        [
+            {
+                "id": "q1",
+                "questionText": "What is the capital of France?",
+                "options": ["London", "Berlin", "Paris", "Madrid"],
+                "correctAnswer": "Paris",
+                "explanation": "Paris is the capital and most populous city of France.",
+                "subject": "Geography",
+                "difficulty": "easy"
+            }
+        ]`;
+
         const response = await ai.models.generateContent({
             model,
-            contents: prompt,
-            config: {
+            contents: [
+                { role: "user", parts: [{ text: prompt }] },
+            ],
+            generationConfig: {
                 responseMimeType: "application/json",
                 temperature: 0.7,
-                maxOutputTokens: 2000,
+                maxOutputTokens: 4000,
             },
         });
 
         try {
             const questions = JSON.parse(response.text);
-            return Array.isArray(questions) ? questions : [];
+            if (!Array.isArray(questions)) {
+                throw new Error('Response is not an array');
+            }
+            
+            // Validate and format each question
+            return questions.map((q, i) => ({
+                id: q.id || `test-${Date.now()}-${i}`,
+                questionText: q.questionText || `Question ${i + 1} about ${topic}`,
+                options: Array.isArray(q.options) && q.options.length === 4 ? q.options : 
+                    ["Option 1", "Option 2", "Option 3", "Option 4"],
+                correctAnswer: q.correctAnswer || "Option 1",
+                explanation: q.explanation || 'No explanation provided',
+                subject: q.subject || subject || 'General',
+                difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty) ? q.difficulty : 'medium'
+            }));
         } catch (parseError) {
-            console.error('Error parsing test questions:', parseError);
-            return [];
+            console.error('Error parsing test questions:', parseError, 'Response:', response?.text);
+            throw new Error('Failed to parse test questions. Please try again.');
         }
     } catch (error) {
         console.error('Error generating test questions:', error);
-        return [{
-            questionText: "An error occurred while generating test questions. Please try again later.",
-            options: ["Option 1", "Option 2", "Option 3", "Option 4"],
-            correctAnswer: "Option 1",
-            explanation: "There was an error generating the test questions. Please try again later."
-        }];
+        throw new Error('Failed to generate test questions. Please try again later.');
     }
 };
 
@@ -161,19 +265,46 @@ export const generateDailyQuestions = async (board: string): Promise<Question[]>
     if (!ai) {
         console.error("AI client is not initialized. Please check your API key.");
         return [{
+            id: `error-${Date.now()}`,
             questionText: "AI service is currently unavailable. Please check your API key.",
             options: ["Option 1", "Option 2", "Option 3", "Option 4"],
             correctAnswer: "Option 1",
-            explanation: "The AI service is not available. Please check your API key and try again."
+            explanation: "The AI service is not available. Please check your API key and try again.",
+            subject: "General",
+            difficulty: "medium"
         }];
     }
 
     try {
-        const prompt = `Generate 5 diverse, high-quality multiple-choice questions suitable for a student studying under the "${board}" curriculum. The topics can be varied (e.g., Math, Science, History) to provide a good daily challenge.`;
+        const prompt = `Generate 5 diverse, high-quality multiple-choice questions in JSON format suitable for a student studying under the "${board}" curriculum. 
+        The response must be a valid JSON array where each question has these exact fields:
+        - id: string (unique identifier)
+        - questionText: string (the question itself)
+        - options: string[] (exactly 4 options)
+        - correctAnswer: string (must match one of the options exactly)
+        - explanation: string (explanation of the answer)
+        - subject: string (subject area)
+        - difficulty: 'easy' | 'medium' | 'hard'
+        
+        Example format:
+        [
+            {
+                "id": "q1",
+                "questionText": "What is the capital of France?",
+                "options": ["London", "Berlin", "Paris", "Madrid"],
+                "correctAnswer": "Paris",
+                "explanation": "Paris is the capital of France.",
+                "subject": "Geography",
+                "difficulty": "easy"
+            }
+        ]`;
+
         const response = await ai.models.generateContent({
             model,
-            contents: prompt,
-            config: {
+            contents: [
+                { role: "user", parts: [{ text: prompt }] },
+            ],
+            generationConfig: {
                 responseMimeType: "application/json",
                 temperature: 0.7,
                 maxOutputTokens: 2000,
@@ -182,19 +313,28 @@ export const generateDailyQuestions = async (board: string): Promise<Question[]>
 
         try {
             const questions = JSON.parse(response.text);
-            return Array.isArray(questions) ? questions : [];
+            if (!Array.isArray(questions)) {
+                throw new Error('Response is not an array');
+            }
+            
+            // Validate each question has required fields
+            return questions.map((q, i) => ({
+                id: q.id || `daily-${Date.now()}-${i}`,
+                questionText: q.questionText || 'No question text provided',
+                options: Array.isArray(q.options) && q.options.length === 4 ? q.options : 
+                    ["Option 1", "Option 2", "Option 3", "Option 4"],
+                correctAnswer: q.correctAnswer || "Option 1",
+                explanation: q.explanation || 'No explanation provided',
+                subject: q.subject || 'General',
+                difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty) ? q.difficulty : 'medium'
+            }));
         } catch (parseError) {
-            console.error('Error parsing daily questions:', parseError);
-            return [];
+            console.error('Error parsing daily questions:', parseError, 'Response:', response?.text);
+            throw new Error('Failed to parse questions. Please try again.');
         }
     } catch (error) {
         console.error('Error generating daily questions:', error);
-        return [{
-            questionText: "An error occurred while generating daily questions. Please try again later.",
-            options: ["Option 1", "Option 2", "Option 3", "Option 4"],
-            correctAnswer: "Option 1",
-            explanation: "There was an error generating the daily questions. Please try again later."
-        }];
+        throw new Error('Failed to generate questions. Please try again later.');
     }
 };
 

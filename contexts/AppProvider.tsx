@@ -1,9 +1,37 @@
-import React, { useState, ReactNode } from 'react';
+import React, { useState, useEffect, useCallback, ReactNode } from 'react';
 import { AppContext } from './AppContext';
 import type { UserProfile, TimelineEntry, TestRecord, Report, Message } from '../types';
+import { getUserProfile, saveUserProfile } from '../services/localStorageService';
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+    const [userProfile, setUserProfileState] = useState<UserProfile | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    // Load user profile from local storage on mount
+    useEffect(() => {
+        try {
+            const profile = getUserProfile();
+            setUserProfileState(profile);
+        } catch (error) {
+            console.error("Failed to load user profile:", error);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    // Wrap setUserProfile to also save to local storage
+    const setUserProfile = useCallback((profile: UserProfile | null) => {
+        try {
+            setUserProfileState(profile);
+            if (profile) {
+                saveUserProfile(profile);
+            } else {
+                localStorage.removeItem('examito_user_profile');
+            }
+        } catch (error) {
+            console.error("Failed to save user profile:", error);
+        }
+    }, []);
 
     const addTimelineEntry = (entry: TimelineEntry) => {
         if (!userProfile) return;
@@ -49,6 +77,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         <AppContext.Provider
             value={{
                 userProfile,
+                loading,
                 setUserProfile,
                 addTimelineEntry,
                 addTestRecord,
@@ -56,7 +85,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 setTutorHistory
             }}
         >
-            {children}
+            {!loading && children}
         </AppContext.Provider>
     );
 };

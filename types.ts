@@ -75,6 +75,7 @@ export enum View {
 
 export interface AppContextType {
     userProfile: UserProfile | null;
+    loading: boolean;
     setUserProfile: (profile: UserProfile | null) => void;
     addTimelineEntry: (entry: TimelineEntry) => void;
     addTestRecord: (record: TestRecord) => void;

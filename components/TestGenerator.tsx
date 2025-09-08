@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 
 const TestGenerator: React.FC = () => {
-    const { userProfile, addTestRecord } = useContext(AppContext);
+    const { userProfile, addTestRecord, addTimelineEntry, setUserProfile } = useContext(AppContext);
     const [topic, setTopic] = useState('');
     const [subject, setSubject] = useState('General');
     const [numQuestions, setNumQuestions] = useState(5);
@@ -43,27 +43,76 @@ const TestGenerator: React.FC = () => {
     };
     
     const handleSubmitTest = () => {
-        if (!currentTest) return;
+        if (!currentTest || !userProfile) return;
+        
+        // Calculate score and prepare test record with user answers
         let correctAnswers = 0;
-        currentTest.forEach((q, i) => {
-            if(q.correctAnswer === answers[i]) {
-                correctAnswers++;
-            }
+        const questionsWithUserAnswers = currentTest.map((q, i) => ({
+            ...q,
+            userAnswer: answers[i],
+            isCorrect: q.correctAnswer === answers[i],
+            // Add explanation if not already present
+            explanation: q.explanation || `The correct answer is ${q.correctAnswer}.`
+        }));
+        
+        questionsWithUserAnswers.forEach(q => {
+            if (q.isCorrect) correctAnswers++;
         });
+        
         const finalScore = Math.round((correctAnswers / currentTest.length) * 100);
         setScore(finalScore);
         
+        // Create test record with detailed results
+        const testId = uuidv4();
         const newTestRecord: TestRecord = {
-            testId: uuidv4(),
+            testId,
             subject: topic,
-            board: userProfile!.board,
-            questions: currentTest,
+            board: userProfile.board,
+            questions: questionsWithUserAnswers,
             score: finalScore,
-            dateTaken: new Date().toISOString()
+            dateTaken: new Date().toISOString(),
+            totalQuestions: currentTest.length,
+            correctAnswers,
+            incorrectAnswers: currentTest.length - correctAnswers
         };
+        
+        // Add test record
         addTestRecord(newTestRecord);
+        
+        // Create a detailed timeline entry
+        const timelineEntry = {
+            id: uuidv4(),
+            type: 'test' as const,
+            title: `Test Completed: ${topic}`,
+            description: `Scored ${correctAnswers}/${currentTest.length} (${finalScore}%)`,
+            date: new Date().toISOString(),
+            details: {
+                testId,
+                score: finalScore,
+                topic: topic,
+                correctAnswers,
+                totalQuestions: currentTest.length,
+                subject: topic
+            }
+        };
+        
+        // Add to timeline
+        addTimelineEntry(timelineEntry);
+        
+        // Update user's test history
+        const updatedProfile = {
+            ...userProfile,
+            tests: [...userProfile.tests, newTestRecord],
+            timeline: [...userProfile.timeline, timelineEntry]
+                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        };
+        
+        // Update user profile
+        setUserProfile(updatedProfile);
+        
+        // Update state
         setTestFinished(true);
-        toast.success(`Test submitted! Your score is ${finalScore}%`);
+        toast.success(`Test submitted! Your score is ${correctAnswers}/${currentTest.length} (${finalScore}%)`);
     };
     
     const startNewTest = () => {
@@ -94,14 +143,71 @@ const TestGenerator: React.FC = () => {
         );
     }
     
-    if (testFinished) {
+    if (testFinished && currentTest) {
+        const totalMarks = currentTest.length;
+        const marksObtained = Math.round((score / 100) * totalMarks);
+        
         return (
-            <div className="text-center bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-lg animate-fade-in">
-                <div className="text-6xl mb-4">🎉</div>
-                <h2 className="text-4xl font-bold text-green-600">Test Complete!</h2>
-                <p className="text-xl mt-4">Your score on "{topic}":</p>
-                <p className={`text-7xl font-extrabold my-4 ${score >= 70 ? 'text-green-500' : 'text-red-500'}`}>{score}%</p>
-                <button onClick={startNewTest} className="mt-6 py-3 px-6 bg-green-600 text-white font-semibold rounded-xl shadow-md hover:bg-green-700 transition-transform transform hover:scale-105">Take Another Test</button>
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-lg animate-fade-in">
+                <div className="text-center">
+                    <div className="text-6xl mb-4">🎉</div>
+                    <h2 className="text-4xl font-bold text-green-600">Test Complete!</h2>
+                    <p className="text-xl mt-4">Your score on "{topic}":</p>
+                    <div className="flex justify-center items-baseline gap-4 my-4">
+                        <p className={`text-7xl font-extrabold ${score >= 70 ? 'text-green-500' : 'text-red-500'}`}>
+                            {marksObtained}/{totalMarks}
+                        </p>
+                        <p className={`text-4xl font-bold ${score >= 70 ? 'text-green-400' : 'text-red-400'}`}>
+                            ({score}%)
+                        </p>
+                    </div>
+                </div>
+
+                <div className="mt-8 space-y-6">
+                    <h3 className="text-2xl font-bold">Test Review</h3>
+                    {currentTest.map((q, index) => {
+                        const isCorrect = q.correctAnswer === answers[index];
+                        return (
+                            <div 
+                                key={index} 
+                                className={`p-4 rounded-lg border-2 ${isCorrect ? 'border-green-200 bg-green-50 dark:bg-green-900/20' : 'border-red-200 bg-red-50 dark:bg-red-900/20'}`}
+                            >
+                                <div className="flex justify-between items-start">
+                                    <p className="font-semibold">Q{index + 1}. {q.questionText}</p>
+                                    <span className={`px-2 py-1 rounded text-xs font-bold ${isCorrect ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                        {isCorrect ? 'Correct' : 'Incorrect'}
+                                    </span>
+                                </div>
+                                
+                                {!isCorrect && answers[index] && (
+                                    <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                                        Your answer: {answers[index]}
+                                    </p>
+                                )}
+                                
+                                <p className="mt-2 text-sm text-green-700 dark:text-green-400">
+                                    <span className="font-semibold">Correct answer:</span> {q.correctAnswer}
+                                </p>
+                                
+                                {q.explanation && (
+                                    <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/30 rounded-md">
+                                        <p className="text-sm font-medium text-blue-800 dark:text-blue-200">Explanation:</p>
+                                        <p className="text-sm text-blue-700 dark:text-blue-300">{q.explanation}</p>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+
+                <div className="mt-8 text-center">
+                    <button 
+                        onClick={startNewTest} 
+                        className="py-3 px-6 bg-green-600 text-white font-semibold rounded-xl shadow-md hover:bg-green-700 transition-transform transform hover:scale-105"
+                    >
+                        Take Another Test
+                    </button>
+                </div>
             </div>
         );
     }

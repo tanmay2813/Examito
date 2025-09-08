@@ -3,7 +3,6 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig(({ mode }) => {
-  // Only load env variables that start with VITE_ to the client
   const env = loadEnv(mode, process.cwd(), '');
   
   // Environment variables that should be exposed to the client

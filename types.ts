@@ -27,17 +27,22 @@ export interface UserProfile {
 }
 
 export interface TimelineEntry {
-  entryId: string;
+  id: string;
+  type: 'test' | 'study' | 'reminder' | 'achievement' | 'other';
   title: string;
   description: string;
   date: string; // ISO8601 string
-  reminderFrequency: 'daily' | 'weekly' | 'monthly' | 'none';
+  details?: Record<string, any>;
+  reminderFrequency?: 'daily' | 'weekly' | 'monthly' | 'none';
 }
 
 export interface Question {
     questionText: string;
     options: string[];
     correctAnswer: string;
+    explanation?: string;
+    userAnswer?: string;
+    isCorrect?: boolean;
 }
 
 export interface TestRecord {
@@ -47,6 +52,9 @@ export interface TestRecord {
   questions: Question[];
   score: number;
   dateTaken: string; // ISO8601 string
+  totalQuestions: number;
+  correctAnswers: number;
+  incorrectAnswers: number;
 }
 
 export interface Report {

@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { AppProvider } from './contexts/AppProvider';
-import useUserProfile from './hooks/useUserProfile';
+import { AppContext } from './contexts/AppContext';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import AdaptiveTutor from './components/AdaptiveTutor';
@@ -13,7 +13,7 @@ import { View } from './types';
 import { Toaster, toast } from 'react-hot-toast';
 
 const AppContent: React.FC = () => {
-    const { userProfile, loading } = useUserProfile();
+    const { userProfile, loading } = useContext(AppContext);
     const [activeView, setActiveView] = useState<View>(View.DASHBOARD);
 
     useEffect(() => {

@@ -122,8 +122,28 @@ const AdaptiveTutor: React.FC = () => {
         setFile(null);
 
         try {
-            let aiResponseText = await getAdaptiveResponse(messages, promptForApi, fileDataForApi);
+            const aiResponse = await getAdaptiveResponse(messages, promptForApi, fileDataForApi);
+            let aiResponseText = aiResponse.text;
 
+            // Handle timeline actions from the new response structure
+            if (aiResponse.timelineAction) {
+                try {
+                    const newEntry: TimelineEntry = {
+                        entryId: uuidv4(),
+                        type: aiResponse.timelineAction.entry.type || 'study',
+                        title: aiResponse.timelineAction.entry.title || 'Study Reminder',
+                        description: aiResponse.timelineAction.entry.description || '',
+                        date: aiResponse.timelineAction.entry.date || new Date().toISOString(),
+                        reminderFrequency: aiResponse.timelineAction.entry.reminderFrequency || 'weekly'
+                    };
+                    addTimelineEntry(newEntry);
+                    toast.success(`🗓️ Tutor added "${newEntry.title}" to your timeline!`);
+                } catch (e) {
+                    console.error("Failed to process timeline action from AI response:", e);
+                }
+            }
+
+            // Also check for the old timeline format for backward compatibility
             const timelineRegex = /<TIMELINE_ENTRY>([\s\S]*?)<\/TIMELINE_ENTRY>/;
             const match = aiResponseText.match(timelineRegex);
 

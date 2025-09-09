@@ -1,22 +1,34 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { UserProfile, Question, Message, Report } from '../types';
 
 // Get API key from environment variables (Vite prefixes client-side env vars with VITE_)
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 
+console.log('API Key check:', {
+    hasKey: !!API_KEY,
+    keyLength: API_KEY?.length,
+    keyPrefix: API_KEY?.substring(0, 10) + '...',
+    isDev: import.meta.env.DEV
+});
+
 // Initialize GoogleGenAI only if API key is available
-let ai: any = null;
+let genAI: GoogleGenerativeAI | null = null;
 try {
-    if (API_KEY) {
-        ai = new GoogleGenAI({ apiKey: API_KEY });
-    } else if (import.meta.env.DEV) {
-        console.warn("GEMINI_API_KEY environment variable is not set. AI features will be disabled.");
+    if (API_KEY && API_KEY.trim() !== '' && API_KEY !== 'YOUR_API_KEY_HERE') {
+        genAI = new GoogleGenerativeAI(API_KEY);
+        console.log('✅ GoogleGenAI client initialized successfully');
+    } else {
+        console.warn('⚠️ API key not configured properly');
+        if (import.meta.env.DEV) {
+            console.warn("GEMINI_API_KEY environment variable is not set or invalid. AI features will be disabled.");
+            console.warn("Current API_KEY value:", API_KEY ? `${API_KEY.substring(0, 10)}...` : 'undefined');
+        }
     }
 } catch (error) {
-    console.error("Failed to initialize GoogleGenAI:", error);
+    console.error("❌ Failed to initialize GoogleGenAI:", error);
+    genAI = null;
 }
 
-const model = 'gemini-2.5-flash';
 
 // Adaptive Tutoring
 const getAdaptiveTutorPrompt = () => `
@@ -88,10 +100,21 @@ export const getAdaptiveResponse = async (
     newMessage: string,
     file?: { mimeType: string, data: string }
 ): Promise<{ text: string; timelineAction?: TimelineAction }> => {
-    if (!ai) {
-        console.error("AI client is not initialized. Please check your API key.");
+    console.log('getAdaptiveResponse called, genAI status:', {
+        genAI: !!genAI,
+        apiKey: !!API_KEY,
+        apiKeyLength: API_KEY?.length
+    });
+    
+    if (!genAI) {
+        console.error("❌ AI client is not initialized. Please check your API key.");
+        console.error("Debug info:", {
+            API_KEY: API_KEY ? `${API_KEY.substring(0, 10)}...` : 'not set',
+            genAI: genAI,
+            env: import.meta.env.VITE_GEMINI_API_KEY ? 'set' : 'not set'
+        });
         return {
-            text: "I'm sorry, but I'm having trouble connecting to the AI service. Please check your API key and try again later."
+            text: "🔑 **AI Service Not Available**\n\nDebugging info:\n- API Key in env: " + (API_KEY ? 'Present' : 'Missing') + "\n- Client initialized: " + (genAI ? 'Yes' : 'No') + "\n\nPlease check your `.env` file and make sure `VITE_GEMINI_API_KEY` is set correctly.\n\nGet your API key from: [Google AI Studio](https://makersuite.google.com/app/apikey)"
         };
     }
 
@@ -119,27 +142,41 @@ export const getAdaptiveResponse = async (
         }
 
         // Generate the response
-        const result = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: messages,
+        const model = genAI.getGenerativeModel({ 
+            model: 'gemini-1.5-flash',
             generationConfig: {
                 temperature: 0.7,
                 maxOutputTokens: 2000,
             },
         });
 
-        const responseText = result.text();
-        
-        // Check for timeline actions in the response
-        const timelineAction = parseTimelineAction(responseText);
-        
-        // Remove the JSON from the response text if it exists
-        const cleanText = responseText.replace(/\{[\s\S]*\}/, '').trim();
-        
-        return {
-            text: cleanText || responseText,
-            ...(timelineAction && { timelineAction })
-        };
+        try {
+            // For Google Generative AI, we need to send just the latest user message
+            // and handle conversation context differently
+            const userMessage = newMessage + (file ? ' [File uploaded]' : '');
+            
+            const result = await model.generateContent(userMessage);
+            
+            // Get the response text
+            const responseText = result.response.text();
+            
+            // Check for timeline actions in the response
+            const timelineAction = parseTimelineAction(responseText);
+            
+            // Remove the JSON from the response text if it exists
+            let cleanText = responseText;
+            if (timelineAction) {
+                cleanText = responseText.replace(/\{[\s\S]*\}/, '').trim();
+            }
+            
+            return {
+                text: cleanText || responseText,
+                ...(timelineAction && { timelineAction })
+            };
+        } catch (error) {
+            console.error('Error generating response:', error);
+            throw error;
+        }
     } catch (error) {
         console.error('Error generating adaptive response:', error);
         return {
@@ -153,7 +190,7 @@ export const getAdaptiveResponse = async (
 // The `getAdaptiveResponse` function now handles file uploads.
 // Fix: Added back analyzeFileContent to fix an import error in the FileAnalyzer component.
 export const analyzeFileContent = async (base64Data: string, mimeType: string, prompt: string): Promise<string> => {
-    if (!ai) {
+    if (!genAI) {
         console.error("AI client is not initialized. Please check your API key.");
         return "I'm sorry, but the AI service is currently unavailable. Please check your API key and try again later.";
     }
@@ -169,12 +206,10 @@ export const analyzeFileContent = async (base64Data: string, mimeType: string, p
             text: prompt,
         };
     
-        const response = await ai.models.generateContent({
-            model,
-            contents: { parts: [imagePart, textPart] },
-        });
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const response = await model.generateContent([textPart, imagePart]);
     
-        return response.text;
+        return response.response.text();
     } catch (error) {
         console.error("Error analyzing file content:", error);
         return "I'm sorry, but I encountered an error while analyzing the file. Please try again later.";
@@ -183,7 +218,7 @@ export const analyzeFileContent = async (base64Data: string, mimeType: string, p
 
 // Test Generation
 export const generateTestQuestions = async (subject: string, board: string, topic: string, numQuestions: number): Promise<Question[]> => {
-    if (!ai) {
+    if (!genAI) {
         console.error("AI client is not initialized. Please check your API key.");
         return [{
             id: `error-${Date.now()}`,
@@ -221,20 +256,37 @@ export const generateTestQuestions = async (subject: string, board: string, topi
             }
         ]`;
 
-        const response = await ai.models.generateContent({
-            model,
-            contents: [
-                { role: "user", parts: [{ text: prompt }] },
-            ],
+        const model = genAI.getGenerativeModel({ 
+            model: 'gemini-1.5-flash',
             generationConfig: {
                 responseMimeType: "application/json",
                 temperature: 0.7,
                 maxOutputTokens: 4000,
             },
         });
-
+        
+        let responseText = '';
         try {
-            const questions = JSON.parse(response.text);
+            // Generate content and get the response
+            const result = await model.generateContent(prompt);
+            
+            // Get the response text
+            responseText = result.response.text();
+            
+            // Handle markdown code blocks in the response
+            let jsonText = responseText;
+            const codeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            if (codeBlockMatch) {
+                jsonText = codeBlockMatch[1].trim();
+            }
+            
+            // Additional cleanup: remove any leading/trailing non-JSON content
+            const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+            if (jsonMatch) {
+                jsonText = jsonMatch[0];
+            }
+            
+            const questions = JSON.parse(jsonText);
             if (!Array.isArray(questions)) {
                 throw new Error('Response is not an array');
             }
@@ -251,7 +303,7 @@ export const generateTestQuestions = async (subject: string, board: string, topi
                 difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty) ? q.difficulty : 'medium'
             }));
         } catch (parseError) {
-            console.error('Error parsing test questions:', parseError, 'Response:', response?.text);
+            console.error('Error parsing test questions:', parseError, 'Response:', responseText);
             throw new Error('Failed to parse test questions. Please try again.');
         }
     } catch (error) {
@@ -262,7 +314,7 @@ export const generateTestQuestions = async (subject: string, board: string, topi
 
 // Daily 5 Questions
 export const generateDailyQuestions = async (board: string): Promise<Question[]> => {
-    if (!ai) {
+    if (!genAI) {
         console.error("AI client is not initialized. Please check your API key.");
         return [{
             id: `error-${Date.now()}`,
@@ -299,20 +351,32 @@ export const generateDailyQuestions = async (board: string): Promise<Question[]>
             }
         ]`;
 
-        const response = await ai.models.generateContent({
-            model,
-            contents: [
-                { role: "user", parts: [{ text: prompt }] },
-            ],
+        const model = genAI.getGenerativeModel({ 
+            model: 'gemini-1.5-flash',
             generationConfig: {
                 responseMimeType: "application/json",
                 temperature: 0.7,
                 maxOutputTokens: 2000,
             },
         });
+        const response = await model.generateContent(prompt);
 
         try {
-            const questions = JSON.parse(response.text);
+            let responseText = response.response.text();
+            
+            // Handle markdown code blocks in the response
+            const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            if (codeBlockMatch) {
+                responseText = codeBlockMatch[1].trim();
+            }
+            
+            // Additional cleanup: remove any leading/trailing non-JSON content
+            const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+            if (jsonMatch) {
+                responseText = jsonMatch[0];
+            }
+            
+            const questions = JSON.parse(responseText);
             if (!Array.isArray(questions)) {
                 throw new Error('Response is not an array');
             }
@@ -329,7 +393,7 @@ export const generateDailyQuestions = async (board: string): Promise<Question[]>
                 difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty) ? q.difficulty : 'medium'
             }));
         } catch (parseError) {
-            console.error('Error parsing daily questions:', parseError, 'Response:', response?.text);
+            console.error('Error parsing daily questions:', parseError, 'Response:', response?.response?.text());
             throw new Error('Failed to parse questions. Please try again.');
         }
     } catch (error) {
@@ -341,7 +405,7 @@ export const generateDailyQuestions = async (board: string): Promise<Question[]>
 // Generate Progress Report
 export const generateProgressReport = async (userProfile: UserProfile): Promise<Report> => {
     // Check if AI client is initialized
-    if (!ai) {
+    if (!genAI) {
         console.error("AI client is not initialized. Please check your API key.");
         // Return a default error report
         return {
@@ -372,18 +436,36 @@ export const generateProgressReport = async (userProfile: UserProfile): Promise<
         - plan: A simple, actionable step-by-step learning plan with 3-4 steps.
         `;
         
-        const response = await ai.models.generateContent({
-            model,
-            contents: prompt,
-            config: {
+        const model = genAI.getGenerativeModel({ 
+            model: 'gemini-1.5-flash',
+            generationConfig: {
                 responseMimeType: "application/json",
                 temperature: 0.5,
                 maxOutputTokens: 2000,
             },
         });
-
+        let responseText = '';
         try {
-            const report = JSON.parse(response.text);
+            const result = await model.generateContent(prompt);
+            
+            // Get the response text
+            responseText = result.response.text();
+            
+            // Handle markdown code blocks in the response
+            let jsonText = responseText;
+            const codeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            if (codeBlockMatch) {
+                jsonText = codeBlockMatch[1].trim();
+            }
+            
+            // Additional cleanup: remove any leading/trailing non-JSON content
+            const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                jsonText = jsonMatch[0];
+            }
+            
+            const report = JSON.parse(jsonText);
+            
             // Ensure all required fields are present and of the correct type
             return {
                 reportId: `report-${Date.now()}`,
@@ -396,12 +478,12 @@ export const generateProgressReport = async (userProfile: UserProfile): Promise<
                 dateGenerated: new Date().toISOString()
             };
         } catch (parseError) {
-            console.error('Error parsing progress report:', parseError);
+            console.error('Error parsing progress report:', parseError, 'Response:', responseText);
             return {
                 reportId: `error-${Date.now()}`,
                 strengths: [],
                 improvements: ["Error parsing the progress report"],
-                stepByStepPlan: ["Could not parse the progress report. Please try again later."],
+                stepByStepPlan: ["Could not parse the progress report. The AI response format was unexpected."],
                 dateGenerated: new Date().toISOString()
             };
         }

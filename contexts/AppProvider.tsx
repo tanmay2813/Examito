@@ -85,7 +85,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 setTutorHistory
             }}
         >
-            {!loading && children}
+            {children}
         </AppContext.Provider>
     );
 };
